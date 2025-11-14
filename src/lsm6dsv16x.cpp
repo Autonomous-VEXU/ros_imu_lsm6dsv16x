@@ -8,6 +8,7 @@
 #include <fcntl.h>
 #include <sys/ioctl.h>
 
+#include "geometry_msgs/msg/quaternion.hpp"
 #include "i2c/i2c.h"
 #include "lsm6dsv16x_reg.h"
 #include "rclcpp/rclcpp.hpp"
@@ -23,27 +24,41 @@ constexpr const char *i2c_dev_addr = "/dev/i2c-0";
   return (mG / 1000.) / 9.81;
 }
 
-geometry_msgs::msg::Quaternion euler_to_quaternion(double roll, double pitch,
-                                                   double yaw) {
-  double cr = cos(roll * 0.5);
-  double sr = sin(roll * 0.5);
-  double cp = cos(pitch * 0.5);
-  double sp = sin(pitch * 0.5);
-  double cy = cos(yaw * 0.5);
-  double sy = sin(yaw * 0.5);
+[[nodiscard]] double f16_to_double(uint16_t h) {
+  union {
+    float_t ret;
+    uint32_t retbits;
+  } conv;
+  conv.retbits = lsm6dsv16x_from_f16_to_f32(h);
 
-  geometry_msgs::msg::Quaternion q;
-  q.w = cr * cp * cy + sr * sp * sy;
-  q.x = sr * cp * cy - cr * sp * sy;
-  q.y = cr * sp * cy + sr * cp * sy;
-  q.z = cr * cp * sy - sr * sp * cy;
+  return static_cast<double>(conv.ret);
+}
 
-  return q;
+geometry_msgs::msg::Quaternion sflp_to_quaternion(uint16_t sflp[3]) {
+  geometry_msgs::msg::Quaternion ret;
+
+  ret.x = f16_to_double(sflp[0]);
+  ret.y = f16_to_double(sflp[1]);
+  ret.z = f16_to_double(sflp[2]);
+
+  double sum_squares = (ret.x * ret.x) + (ret.y * ret.y) + (ret.z * ret.z);
+
+  if (sum_squares > 1.0) {
+    float_t n = std::sqrt(sum_squares);
+    ret.x /= n;
+    ret.y /= n;
+    ret.z /= n;
+    sum_squares = 1.0;
+  }
+
+  ret.w = std::sqrt(1.0 - sum_squares);
+
+  return ret;
 }
 
 class LSM6DSV16XNode : public rclcpp::Node {
 public:
-  LSM6DSV16XNode() : Node("lsm6dsv16x_node"), count(0) {
+  LSM6DSV16XNode() : Node("lsm6dsv16x_node") {
     int i2c_fd = i2c_open(i2c_dev_addr);
     if (i2c_fd < 0) {
       std::cout << "Could not open i2c device" << std::endl;
@@ -84,14 +99,38 @@ public:
     // If you change this, you must also change any use of
     // lsm6dsv16x_from_fs4_to_mg()
     lsm6dsv16x_xl_full_scale_set(&dev_ctx, LSM6DSV16X_4g);
+
+    // Set number of samples stored in FIFO, we should only need 1 for
+    // our purposes?
+    lsm6dsv16x_fifo_watermark_set(&dev_ctx, 1);
+
+    // Enable only quaternion for SFLP output
+    lsm6dsv16x_fifo_sflp_raw_t fifo_sflp{
+        .game_rotation = 1, .gravity = 0, .gbias = 0};
+    lsm6dsv16x_fifo_sflp_batch_set(&dev_ctx, fifo_sflp);
+
+    // Set FIFO to continuous mode to always overwrite the oldest sample
+    lsm6dsv16x_fifo_mode_set(&dev_ctx, LSM6DSV16X_STREAM_MODE);
+
+    // Stop on WTM, we only want the most recent sample
+    lsm6dsv16x_fifo_stop_on_wtm_set(&dev_ctx, LSM6DSV16X_FIFO_EV_WTM);
+
+    // Set output data rates
+    lsm6dsv16x_xl_data_rate_set(&dev_ctx, LSM6DSV16X_ODR_AT_120Hz);
+    lsm6dsv16x_gy_data_rate_set(&dev_ctx, LSM6DSV16X_ODR_AT_120Hz);
+    lsm6dsv16x_sflp_data_rate_set(&dev_ctx, LSM6DSV16X_SFLP_120Hz);
+
+    lsm6dsv16x_sflp_game_rotation_set(&dev_ctx, PROPERTY_ENABLE);
+
+    // TODO: Do we want/need to add a GBias for quaternion?
+    // lsm6dsv16x_sflp_game_gbias_set()
   }
 
 private:
   I2CDevice i2c_dev;
   stmdev_ctx_t dev_ctx;
-  size_t count;
 
-  void make_imu_message() {
+  std::unique_ptr<sensor_msgs::msg::Imu> make_imu_message() {
     auto message = std::make_unique<sensor_msgs::msg::Imu>();
     message->header.stamp = this->get_clock()->now();
     message->header.frame_id = "imu_lsm6dsv16x";
@@ -114,7 +153,31 @@ private:
     message->linear_acceleration.z =
         mG_to_meter_per_sec2(lsm6dsv16x_from_fs8_to_mg(lin_accel_raw[2]));
 
-    count++;
+    lsm6dsv16x_fifo_status_t fifo_status;
+    lsm6dsv16x_fifo_status_get(&dev_ctx, &fifo_status);
+    bool got_orientation = false;
+    if (fifo_status.fifo_th) {
+      // There is a sample present
+      lsm6dsv16x_fifo_out_raw_t raw_fifo_data;
+      lsm6dsv16x_fifo_out_raw_get(&dev_ctx, &raw_fifo_data);
+
+      if (raw_fifo_data.tag == LSM6DSV16X_SFLP_GAME_ROTATION_VECTOR_TAG) {
+        message->orientation = sflp_to_quaternion(
+            reinterpret_cast<uint16_t *>(raw_fifo_data.data));
+      }
+    }
+
+    if (!got_orientation) {
+      // No orientation present, set first covariance element to -1 to
+      // indicate as such
+      message->orientation_covariance[0] = -1.f;
+      message->orientation.w = 0;
+      message->orientation.x = 0;
+      message->orientation.y = 0;
+      message->orientation.z = 0;
+    }
+
+    return message;
   }
 
   static int32_t i2c_write_impl(void *handle, uint8_t reg, const uint8_t *bufp,
