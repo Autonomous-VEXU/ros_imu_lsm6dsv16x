@@ -3,6 +3,7 @@
 #include <functional>
 #include <memory>
 #include <ranges>
+#include <ratio>
 #include <string>
 
 #include <fcntl.h>
@@ -75,6 +76,26 @@ public:
     dev_ctx.mdelay = i2c_ms_delay_impl;
     dev_ctx.handle = &i2c_dev;
 
+    configure_imu();
+
+    ros_publisher = this->create_publisher<sensor_msgs::msg::Imu>(
+        "imu/data", rclcpp::SensorDataQoS());
+    RCLCPP_INFO(this->get_logger(), "Started LSM6DSV16X IMU Node");
+
+    ros_timer = this->create_wall_timer(std::chrono::milliseconds(100), [this] {
+      ros_publisher->publish(make_imu_message());
+    });
+  }
+
+  ~LSM6DSV16XNode() { i2c_close(i2c_dev.bus); }
+
+private:
+  I2CDevice i2c_dev;
+  stmdev_ctx_t dev_ctx;
+  rclcpp::TimerBase::SharedPtr ros_timer;
+  rclcpp::Publisher<sensor_msgs::msg::Imu>::SharedPtr ros_publisher;
+
+  void configure_imu() {
     uint8_t device_id;
     lsm6dsv16x_device_id_get(&dev_ctx, &device_id);
     if (device_id != LSM6DSV16X_ID) {
@@ -125,10 +146,6 @@ public:
     // TODO: Do we want/need to add a GBias for quaternion?
     // lsm6dsv16x_sflp_game_gbias_set()
   }
-
-private:
-  I2CDevice i2c_dev;
-  stmdev_ctx_t dev_ctx;
 
   std::unique_ptr<sensor_msgs::msg::Imu> make_imu_message() {
     auto message = std::make_unique<sensor_msgs::msg::Imu>();
