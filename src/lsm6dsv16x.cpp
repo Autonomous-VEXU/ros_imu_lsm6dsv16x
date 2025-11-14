@@ -62,8 +62,8 @@ public:
   LSM6DSV16XNode() : Node("lsm6dsv16x_node") {
     int i2c_fd = i2c_open(i2c_dev_addr);
     if (i2c_fd < 0) {
-      std::cout << "Could not open i2c device" << std::endl;
-      exit(1);
+      RCLCPP_ERROR(this->get_logger(), "Could not open i2c device");
+      return;
     }
 
     i2c_dev.bus = i2c_fd;
@@ -99,11 +99,10 @@ private:
     uint8_t device_id;
     lsm6dsv16x_device_id_get(&dev_ctx, &device_id);
     if (device_id != LSM6DSV16X_ID) {
-      std::cout << "Device ID " << device_id
-                << "did not match expected LSM6 ID of " << LSM6DSV16X_ID
-                << std::endl;
+      RCLCPP_ERROR(this->get_logger(),
+                   "Device ID 0x%02X did not math expected LSM6 ID of 0x%02X",
+                   device_id, LSM6DSV16X_ID);
       i2c_close(i2c_dev.bus);
-      exit(1);
     }
 
     // Reset LSM6
@@ -142,6 +141,8 @@ private:
     lsm6dsv16x_sflp_data_rate_set(&dev_ctx, LSM6DSV16X_SFLP_120Hz);
 
     lsm6dsv16x_sflp_game_rotation_set(&dev_ctx, PROPERTY_ENABLE);
+
+    RCLCPP_INFO(this->get_logger(), "Configured LSM6DSV16X IMU successfully");
 
     // TODO: Do we want/need to add a GBias for quaternion?
     // lsm6dsv16x_sflp_game_gbias_set()
@@ -240,6 +241,6 @@ private:
 
 int main(int argc, char **argv) {
   rclcpp::init(argc, argv);
-
-  return 0;
+  rclcpp::spin(std::make_shared<LSM6DSV16XNode>());
+  rclcpp::shutdown();
 }
