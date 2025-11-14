@@ -8,6 +8,7 @@
 
 #include <fcntl.h>
 #include <sys/ioctl.h>
+#include <thread>
 
 #include "geometry_msgs/msg/quaternion.hpp"
 #include "i2c/i2c.h"
@@ -15,26 +16,55 @@
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/imu.hpp"
 
+/**
+ * @brief Linux device address of I2C bus
+ */
 constexpr const char *i2c_dev_addr = "/dev/i2c-0";
 
+/**
+ * @brief Milli-degrees per second to radians per second
+ *
+ * @param mdps milli-degrees per second
+ * @return radians per second
+ */
 [[nodiscard]] constexpr double mdps_to_rad_per_sec(double mdps) {
   return (mdps / 1000.) / ((2 * std::numbers::pi) / 360);
 }
 
+/**
+ * @brief Milli-G's (linear acceleration) to m/s^2
+ *
+ * @param mG Milli-G's
+ * @return meters per second-squared
+ */
 [[nodiscard]] constexpr double mG_to_meter_per_sec2(double mG) {
   return (mG / 1000.) / 9.81;
 }
 
-[[nodiscard]] double f16_to_double(uint16_t h) {
+/**
+ * @brief Converts 16-bit float to a double (64-bit float)
+ *
+ * @param f16 16-bit float input
+ * @return 64 bit float output
+ */
+[[nodiscard]] double f16_to_double(uint16_t f16) {
   union {
-    float_t ret;
+    float ret;
     uint32_t retbits;
   } conv;
-  conv.retbits = lsm6dsv16x_from_f16_to_f32(h);
+  // Type-punned u32 to float for some reason, thanks ST
+  conv.retbits = lsm6dsv16x_from_f16_to_f32(f16);
 
   return static_cast<double>(conv.ret);
 }
 
+/**
+ * @brief Convert the LSM6's SFLP "game vector" output of 3x f16's into a
+ * quaternion
+ *
+ * @param sflp Reading from LSM6's SFLP "game vector"
+ * @return Equivalent quaternion
+ */
 geometry_msgs::msg::Quaternion sflp_to_quaternion(uint16_t sflp[3]) {
   geometry_msgs::msg::Quaternion ret;
 
@@ -95,6 +125,10 @@ private:
   rclcpp::TimerBase::SharedPtr ros_timer;
   rclcpp::Publisher<sensor_msgs::msg::Imu>::SharedPtr ros_publisher;
 
+  /**
+   * @brief Configure the IMU's registers as needed. See datasheet and
+   * driver source code for more details.
+   */
   void configure_imu() {
     uint8_t device_id;
     lsm6dsv16x_device_id_get(&dev_ctx, &device_id);
@@ -107,7 +141,7 @@ private:
 
     // Reset LSM6
     lsm6dsv16x_sw_por(&dev_ctx);
-    /* Enable Block Data Update */
+    // Enable Block Data Update
     lsm6dsv16x_block_data_update_set(&dev_ctx, PROPERTY_ENABLE);
 
     // Set +/- 1000 deg/sec maximum gyroscope scale
@@ -148,6 +182,7 @@ private:
     // lsm6dsv16x_sflp_game_gbias_set()
   }
 
+  // Read data from the IMU and assemble it into a ROS message
   std::unique_ptr<sensor_msgs::msg::Imu> make_imu_message() {
     auto message = std::make_unique<sensor_msgs::msg::Imu>();
     message->header.stamp = this->get_clock()->now();
@@ -198,6 +233,16 @@ private:
     return message;
   }
 
+  /**
+   * @brief Write data through the LSM6 driver onto the I2C bus.
+   *        Only called via callback in the LSM6 driver.
+   *
+   * @param handle I2CDevice handle
+   * @param reg Register to write to
+   * @param bufp Pointer to data to write
+   * @param len Length of data
+   * @return 0 for OK, -1 for error
+   */
   static int32_t i2c_write_impl(void *handle, uint8_t reg, const uint8_t *bufp,
                                 uint16_t len) {
     if (handle == nullptr || bufp == nullptr) {
@@ -212,6 +257,16 @@ private:
     return 0;
   }
 
+  /**
+   * @brief Read data through the LSM6 driver onto the I2C bus.
+   *        Only called via callback in the LSM6 driver.
+   *
+   * @param handle I2CDevice handle
+   * @param reg Register to read from
+   * @param bufp Pointer to data to read to
+   * @param len Length of data to read
+   * @return 0 for OK, -1 for error
+   */
   static int32_t i2c_read_impl(void *handle, uint8_t reg, uint8_t *bufp,
                                uint16_t len) {
     if (handle == nullptr || bufp == nullptr) {
@@ -226,16 +281,14 @@ private:
     return 0;
   }
 
+  /**
+   * @brief Delay for some number of milliseconds. Only called by the
+   *        LSM6's driver
+   *
+   * @param millisec Number of milliseconds
+   */
   static void i2c_ms_delay_impl(uint32_t millisec) {
-    struct timespec timespec;
-
-    timespec.tv_sec = millisec / 1000;
-    timespec.tv_nsec = (millisec % 1000) * 1000000;
-
-    int res;
-    do {
-      res = nanosleep(&timespec, &timespec);
-    } while (res && errno == EINTR);
+    std::this_thread::sleep_for(std::chrono::milliseconds(millisec));
   }
 };
 
