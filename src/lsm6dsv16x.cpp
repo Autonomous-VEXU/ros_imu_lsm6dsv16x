@@ -19,7 +19,7 @@ int32_t platform_write(void *handle, uint8_t reg, const uint8_t *bufp, uint16_t 
   if (handle == nullptr || bufp == nullptr) { return -1; }
   I2CDevice* i2c_dev = reinterpret_cast<I2CDevice*>(handle);
 
-  if (i2c_write(i2c_dev, reg, bufp, len) < 0) {
+  if (i2c_ioctl_write(i2c_dev, reg, bufp, len) < 0) {
     return -1;
   }
 
@@ -30,7 +30,7 @@ int32_t platform_read(void *handle, uint8_t reg, uint8_t *bufp, uint16_t len) {
   if (handle == nullptr || bufp == nullptr) { return -1; }
   I2CDevice* i2c_dev = reinterpret_cast<I2CDevice*>(handle);
 
-  if (i2c_read(i2c_dev, reg, bufp, len) < 0)
+  if (i2c_ioctl_read(i2c_dev, reg, bufp, len) < 0)
   {
     return -1;
   }
@@ -84,6 +84,11 @@ class LSM6DSV16XNode : public rclcpp::Node {
 
       // Reset LSM6
       lsm6dsv16x_sw_por(&dev_ctx);
+    }
+
+    void read_gyro_data() {
+      int16_t raw_data[3];
+      lsm6dsv16x_angular_rate_raw_get(&dev_ctx, raw_data);
     }
 };
 
