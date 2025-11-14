@@ -12,14 +12,12 @@
 
 #include "geometry_msgs/msg/quaternion.hpp"
 #include "i2c/i2c.h"
+#include "lsm6dsv16x_cfg.hpp"
 #include "lsm6dsv16x_reg.h"
 #include "rclcpp/rclcpp.hpp"
 #include "sensor_msgs/msg/imu.hpp"
 
-/**
- * @brief Linux device address of I2C bus
- */
-constexpr const char *i2c_dev_addr = "/dev/i2c-0";
+namespace {
 
 /**
  * @brief Milli-degrees per second to radians per second
@@ -27,8 +25,8 @@ constexpr const char *i2c_dev_addr = "/dev/i2c-0";
  * @param mdps milli-degrees per second
  * @return radians per second
  */
-[[nodiscard]] constexpr double mdps_to_rad_per_sec(double mdps) {
-  return (mdps / 1000.) / ((2 * std::numbers::pi) / 360);
+[[nodiscard]] constexpr double mdps_to_rad_per_sec(float mdps) {
+  return (static_cast<double>(mdps) / 1000.) / ((2 * std::numbers::pi) / 360);
 }
 
 /**
@@ -37,8 +35,8 @@ constexpr const char *i2c_dev_addr = "/dev/i2c-0";
  * @param mG Milli-G's
  * @return meters per second-squared
  */
-[[nodiscard]] constexpr double mG_to_meter_per_sec2(double mG) {
-  return (mG / 1000.) / 9.81;
+[[nodiscard]] constexpr double mG_to_mps2(float mG) {
+  return (static_cast<double>(mG) / 1000.) / 9.81;
 }
 
 /**
@@ -87,17 +85,57 @@ geometry_msgs::msg::Quaternion sflp_to_quaternion(uint16_t sflp[3]) {
   return ret;
 }
 
+double raw_gyro_to_rad_per_sec(uint16_t raw_gyro) {
+  float mdps;
+  if (IMU_GYRO_SCALE == LSM6DSV16X_125dps) {
+    mdps = lsm6dsv16x_from_fs125_to_mdps(raw_gyro);
+  } else if (IMU_GYRO_SCALE == LSM6DSV16X_250dps) {
+    mdps = lsm6dsv16x_from_fs250_to_mdps(raw_gyro);
+  } else if (IMU_GYRO_SCALE == LSM6DSV16X_500dps) {
+    mdps = lsm6dsv16x_from_fs500_to_mdps(raw_gyro);
+  } else if (IMU_GYRO_SCALE == LSM6DSV16X_1000dps) {
+    mdps = lsm6dsv16x_from_fs1000_to_mdps(raw_gyro);
+  } else if (IMU_GYRO_SCALE == LSM6DSV16X_2000dps) {
+    mdps = lsm6dsv16x_from_fs2000_to_mdps(raw_gyro);
+  } else if (IMU_GYRO_SCALE == LSM6DSV16X_4000dps) {
+    mdps = lsm6dsv16x_from_fs4000_to_mdps(raw_gyro);
+  } else {
+    return FP_NAN;
+  }
+
+  return mdps_to_rad_per_sec(mdps);
+}
+
+double raw_accel_to_mps2(uint16_t raw_accel) {
+  float mg;
+  if (IMU_ACCEL_SCALE == LSM6DSV16X_2g) {
+    mg = lsm6dsv16x_from_fs2_to_mg(raw_accel);
+  } else if (IMU_ACCEL_SCALE == LSM6DSV16X_4g) {
+    mg = lsm6dsv16x_from_fs4_to_mg(raw_accel);
+  } else if (IMU_ACCEL_SCALE == LSM6DSV16X_8g) {
+    mg = lsm6dsv16x_from_fs8_to_mg(raw_accel);
+  } else if (IMU_ACCEL_SCALE == LSM6DSV16X_16g) {
+    mg = lsm6dsv16x_from_fs16_to_mg(raw_accel);
+  } else {
+    return FP_NAN;
+  }
+
+  return mG_to_mps2(mg);
+}
+
+} // namespace
+
 class LSM6DSV16XNode : public rclcpp::Node {
 public:
   LSM6DSV16XNode() : Node("lsm6dsv16x_node") {
-    int i2c_fd = i2c_open(i2c_dev_addr);
+    int i2c_fd = i2c_open(I2C_DEVICE_PATH);
     if (i2c_fd < 0) {
       RCLCPP_ERROR(this->get_logger(), "Could not open i2c device");
       return;
     }
 
     i2c_dev.bus = i2c_fd;
-    i2c_dev.addr = LSM6DSV16X_I2C_ADD_L;
+    i2c_dev.addr = IMU_I2C_ADDRESS;
     i2c_dev.iaddr_bytes = 1;
     i2c_dev.page_bytes = 256;
 
@@ -109,12 +147,11 @@ public:
     configure_imu();
 
     ros_publisher = this->create_publisher<sensor_msgs::msg::Imu>(
-        "imu/data", rclcpp::SensorDataQoS());
+        ROS_TOPIC_NAME, rclcpp::SensorDataQoS());
     RCLCPP_INFO(this->get_logger(), "Started LSM6DSV16X IMU Node");
 
-    ros_timer = this->create_wall_timer(std::chrono::milliseconds(100), [this] {
-      ros_publisher->publish(make_imu_message());
-    });
+    ros_timer = this->create_wall_timer(
+        PUBLISH_PERIOD, [this] { ros_publisher->publish(make_imu_message()); });
   }
 
   ~LSM6DSV16XNode() { i2c_close(i2c_dev.bus); }
@@ -144,15 +181,8 @@ private:
     // Enable Block Data Update
     lsm6dsv16x_block_data_update_set(&dev_ctx, PROPERTY_ENABLE);
 
-    // Set +/- 1000 deg/sec maximum gyroscope scale
-    // If you change this, you must also change any use of
-    // lsm6dsv16x_from_fs1000_to_mdps()
-    lsm6dsv16x_gy_full_scale_set(&dev_ctx, LSM6DSV16X_1000dps);
-
-    // Set +/- 4G maximum linear acceleration scale
-    // If you change this, you must also change any use of
-    // lsm6dsv16x_from_fs4_to_mg()
-    lsm6dsv16x_xl_full_scale_set(&dev_ctx, LSM6DSV16X_4g);
+    lsm6dsv16x_gy_full_scale_set(&dev_ctx, IMU_GYRO_SCALE);
+    lsm6dsv16x_xl_full_scale_set(&dev_ctx, IMU_ACCEL_SCALE);
 
     // Set number of samples stored in FIFO, we should only need 1 for
     // our purposes?
@@ -170,9 +200,9 @@ private:
     lsm6dsv16x_fifo_stop_on_wtm_set(&dev_ctx, LSM6DSV16X_FIFO_EV_WTM);
 
     // Set output data rates
-    lsm6dsv16x_xl_data_rate_set(&dev_ctx, LSM6DSV16X_ODR_AT_120Hz);
-    lsm6dsv16x_gy_data_rate_set(&dev_ctx, LSM6DSV16X_ODR_AT_120Hz);
-    lsm6dsv16x_sflp_data_rate_set(&dev_ctx, LSM6DSV16X_SFLP_120Hz);
+    lsm6dsv16x_xl_data_rate_set(&dev_ctx, IMU_GYRO_ACCEL_FREQ);
+    lsm6dsv16x_gy_data_rate_set(&dev_ctx, IMU_GYRO_ACCEL_FREQ);
+    lsm6dsv16x_sflp_data_rate_set(&dev_ctx, IMU_SFLP_FREQ);
 
     lsm6dsv16x_sflp_game_rotation_set(&dev_ctx, PROPERTY_ENABLE);
 
@@ -186,25 +216,19 @@ private:
   std::unique_ptr<sensor_msgs::msg::Imu> make_imu_message() {
     auto message = std::make_unique<sensor_msgs::msg::Imu>();
     message->header.stamp = this->get_clock()->now();
-    message->header.frame_id = "imu_lsm6dsv16x";
+    message->header.frame_id = ROS_FRAME_ID;
 
-    std::array<int16_t, 3> angular_vel_raw;
-    lsm6dsv16x_angular_rate_raw_get(&dev_ctx, angular_vel_raw.data());
-    message->angular_velocity.x =
-        mdps_to_rad_per_sec(lsm6dsv16x_from_fs1000_to_mdps(angular_vel_raw[0]));
-    message->angular_velocity.y =
-        mdps_to_rad_per_sec(lsm6dsv16x_from_fs1000_to_mdps(angular_vel_raw[1]));
-    message->angular_velocity.z =
-        mdps_to_rad_per_sec(lsm6dsv16x_from_fs1000_to_mdps(angular_vel_raw[2]));
+    std::array<int16_t, 3> gyro_raw;
+    lsm6dsv16x_angular_rate_raw_get(&dev_ctx, gyro_raw.data());
+    message->angular_velocity.x = raw_gyro_to_rad_per_sec(gyro_raw[0]);
+    message->angular_velocity.y = raw_gyro_to_rad_per_sec(gyro_raw[1]);
+    message->angular_velocity.z = raw_gyro_to_rad_per_sec(gyro_raw[2]);
 
-    std::array<int16_t, 3> lin_accel_raw;
-    lsm6dsv16x_acceleration_raw_get(&dev_ctx, lin_accel_raw.data());
-    message->linear_acceleration.x =
-        mG_to_meter_per_sec2(lsm6dsv16x_from_fs8_to_mg(lin_accel_raw[0]));
-    message->linear_acceleration.y =
-        mG_to_meter_per_sec2(lsm6dsv16x_from_fs8_to_mg(lin_accel_raw[1]));
-    message->linear_acceleration.z =
-        mG_to_meter_per_sec2(lsm6dsv16x_from_fs8_to_mg(lin_accel_raw[2]));
+    std::array<int16_t, 3> accel_raw;
+    lsm6dsv16x_acceleration_raw_get(&dev_ctx, accel_raw.data());
+    message->linear_acceleration.x = raw_accel_to_mps2(accel_raw[0]);
+    message->linear_acceleration.y = raw_accel_to_mps2(accel_raw[1]);
+    message->linear_acceleration.z = raw_accel_to_mps2(accel_raw[2]);
 
     lsm6dsv16x_fifo_status_t fifo_status;
     lsm6dsv16x_fifo_status_get(&dev_ctx, &fifo_status);
