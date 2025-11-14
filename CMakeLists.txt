@@ -7,19 +7,19 @@ endif()
 
 # find dependencies
 find_package(ament_cmake REQUIRED)
-# uncomment the following section in order to fill in
-# further dependencies manually.
 find_package(rclcpp REQUIRED)
+find_package(sensor_msgs REQUIRED)
 
 add_executable(lsm6dsv16x src/lsm6dsv16x.cpp
-                          src/driver/lsm6dsv16x_reg.c
+                          lib/lsm6dsv16x-pid/lsm6dsv16x_reg.c
                           lib/libi2c/src/i2c.c)
-ament_target_dependencies(lsm6dsv16x rclcpp)
+ament_target_dependencies(lsm6dsv16x rclcpp sensor_msgs)
 target_include_directories(lsm6dsv16x PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
   $<INSTALL_INTERFACE:include/${PROJECT_NAME}>
   ${CMAKE_CURRENT_SOURCE_DIR}/include/lsm6dsv16x
-  ${CMAKE_CURRENT_SOURCE_DIR}/lib/libi2c/include)
+  ${CMAKE_CURRENT_SOURCE_DIR}/lib/libi2c/include
+  ${CMAKE_CURRENT_SOURCE_DIR}/lib/lsm6dsv16x-pid)
 target_compile_features(lsm6dsv16x PUBLIC c_std_99 cxx_std_20)
 
 set(CMAKE_EXPORT_COMPILE_COMMANDS ON)

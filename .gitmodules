@@ -1,3 +1,6 @@
 [submodule "lib/libi2c"]
 	path = lib/libi2c
 	url = https://github.com/amaork/libi2c
+[submodule "lib/lsm6dsv16x-pid"]
+	path = lib/lsm6dsv16x-pid
+	url = https://github.com/STMicroelectronics/lsm6dsv16x-pid
