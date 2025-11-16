@@ -1,9 +1,6 @@
 #include <cmath>
 #include <cstdio>
-#include <functional>
 #include <memory>
-#include <ranges>
-#include <ratio>
 #include <string>
 
 #include <fcntl.h>
