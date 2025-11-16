@@ -13,7 +13,7 @@ constexpr std::chrono::duration PUBLISH_PERIOD = 100ms;
 /**
  * @brief Linux device path to the i2c bus
  */
-constexpr const char *I2C_DEVICE_PATH = "/dev/i2c-0";
+constexpr const char *I2C_DEVICE_PATH = "/dev/i2c-8";
 
 /**
  * @brief Topic name that the node will publish on
