@@ -13,7 +13,7 @@ constexpr std::chrono::duration PUBLISH_PERIOD = 100ms;
 /**
  * @brief Linux device path to the i2c bus
  */
-constexpr const char *I2C_DEVICE_PATH = "/dev/i2c-8";
+constexpr const char *I2C_DEVICE_PATH = "/dev/i2c-7";
 
 /**
  * @brief Topic name that the node will publish on
@@ -27,10 +27,10 @@ constexpr const char *ROS_FRAME_ID = "lsm6dsv16x_imu";
 
 /**
  * @brief The device I2C address of the IMU chip. Should probably be
- * either LSM6DSV16X_I2C_ADD_L or LSM6DSV16X_I2C_ADD_H, unless you have
- * an I2C address translator or multiplexer.
+ * either 0x6B or 0x6A, unless you have an I2C address translator or
+ * multiplexer.
  */
-constexpr uint8_t IMU_I2C_ADDRESS = LSM6DSV16X_I2C_ADD_L;
+constexpr uint8_t IMU_I2C_ADDRESS = 0x6B;
 
 /**
  * @brief How frequently the IMU chip is configured to sample data.

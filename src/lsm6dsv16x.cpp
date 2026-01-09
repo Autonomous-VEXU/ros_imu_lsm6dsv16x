@@ -168,9 +168,10 @@ private:
     lsm6dsv16x_device_id_get(&dev_ctx, &device_id);
     if (device_id != LSM6DSV16X_ID) {
       RCLCPP_ERROR(this->get_logger(),
-                   "Device ID 0x%02X did not math expected LSM6 ID of 0x%02X",
+                   "Device ID 0x%02X did not match expected LSM6 ID of 0x%02X",
                    device_id, LSM6DSV16X_ID);
       i2c_close(i2c_dev.bus);
+      exit(1);
     }
 
     // Reset LSM6
@@ -236,6 +237,7 @@ private:
       lsm6dsv16x_fifo_out_raw_get(&dev_ctx, &raw_fifo_data);
 
       if (raw_fifo_data.tag == LSM6DSV16X_SFLP_GAME_ROTATION_VECTOR_TAG) {
+        got_orientation = true;
         message->orientation = sflp_to_quaternion(
             reinterpret_cast<uint16_t *>(raw_fifo_data.data));
       }
