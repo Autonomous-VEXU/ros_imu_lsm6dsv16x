@@ -125,9 +125,31 @@ double raw_accel_to_mps2(uint16_t raw_accel) {
 class LSM6DSV16XNode : public rclcpp::Node {
 public:
   LSM6DSV16XNode() : Node("lsm6dsv16x_node") {
-    int i2c_fd = i2c_open(I2C_DEVICE_PATH);
+
+    this->declare_parameter<std::string>("dev_path", "/dev/i2c-7");
+    this->declare_parameter<std::string>("frame_id", "imu");
+    this->declare_parameter<std::string>("topic", "/imu");
+    this->declare_parameter<uint8_t>("i2c_addr", 0x6B);
+
+    std::string I2C_DEVICE_PATH;
+    uint8_t IMU_I2C_ADDRESS;
+    std::string ROS_FRAME_ID;
+    std::string ROS_TOPIC_NAME;
+
+    this->get_parameter("dev_path", I2C_DEVICE_PATH);
+    this->get_parameter("i2c_addr", IMU_I2C_ADDRESS);
+    this->get_parameter("frame_id", ROS_FRAME_ID);
+    this->get_parameter("topic", ROS_TOPIC_NAME);
+
+    // display set parameters
+    RCLCPP_INFO(this->get_logger(), "dev_path: %s", I2C_DEVICE_PATH.c_str());
+    RCLCPP_INFO(this->get_logger(), "frame_id: %s", ROS_FRAME_ID.c_str());
+    RCLCPP_INFO(this->get_logger(), "topic: %s", ROS_TOPIC_NAME.c_str());
+    RCLCPP_INFO(this->get_logger(), "i2c_addr: %X\n", IMU_I2C_ADDRESS);
+
+    int i2c_fd = i2c_open(I2C_DEVICE_PATH.c_str());
     if (i2c_fd < 0) {
-      RCLCPP_ERROR(this->get_logger(), "Could not open i2c device");
+      RCLCPP_ERROR(this->get_logger(), "Could not open i2c device on path %s", I2C_DEVICE_PATH.c_str());
       return;
     }
 
