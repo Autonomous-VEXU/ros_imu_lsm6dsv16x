@@ -142,14 +142,14 @@ public:
     this->get_parameter("topic", ROS_TOPIC_NAME);
 
     // display set parameters
-    RCLCPP_INFO(this->get_logger(), "dev_path: %s, frame_id: %s, topic: %s, i2c_addr, %d", I2C_DEVICE_PATH.c_str(), ROS_FRAME_ID.c_str(), ROS_FRAME_ID.c_str(), IMU_I2C_ADDRESS);
-    // RCLCPP_INFO(this->get_logger(), "Frame_id: %s", ROS_FRAME_ID.c_str());
-    // RCLCPP_INFO(this->get_logger(), "Data is published on topic: %s", ROS_TOPIC_NAME.c_str());
-    // RCLCPP_INFO(this->get_logger(), "Imu i2c Address: %d", IMU_I2C_ADDRESS);
+    RCLCPP_INFO(this->get_logger(), "dev_path: %s", I2C_DEVICE_PATH.c_str());
+    RCLCPP_INFO(this->get_logger(), "frame_id: %s", ROS_FRAME_ID.c_str());
+    RCLCPP_INFO(this->get_logger(), "topic: %s", ROS_TOPIC_NAME.c_str());
+    RCLCPP_INFO(this->get_logger(), "i2c_addr: %X\n", IMU_I2C_ADDRESS);
 
     int i2c_fd = i2c_open(I2C_DEVICE_PATH.c_str());
     if (i2c_fd < 0) {
-      RCLCPP_ERROR(this->get_logger(), "Could not open i2c device");
+      RCLCPP_ERROR(this->get_logger(), "Could not open i2c device on path %s", I2C_DEVICE_PATH.c_str());
       return;
     }
 
